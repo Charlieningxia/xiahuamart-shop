@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xiahuamart · 订单管理（群主专用）</title>
+<style>
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f6f3ee;color:#222;margin:0;padding:16px}
+.wrap{max-width:860px;margin:0 auto}
+h1{font-size:19px} h2{font-size:15.5px;margin:20px 0 8px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+input,select,button{padding:9px 12px;border:1px solid #e0d8cc;border-radius:8px;font-size:14px;background:#fff}
+button{background:#d93a2b;color:#fff;border:0;cursor:pointer}
+button.ghost{background:#fff;color:#555;border:1px solid #e0d8cc}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;font-size:13px}
+th,td{padding:8px 9px;border-bottom:1px solid #f0e9e2;text-align:left;vertical-align:top;line-height:1.5}
+th{background:#faf7f2;color:#777;font-weight:600}
+.sum{background:#fff;border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.8}
+.err{color:#d93a2b;font-size:13.5px;margin-top:8px}
+.st{font-weight:700}
+small{color:#999}
+</style></head><body><div class="wrap">
+<h1>Xiahuamart 订单管理 <small>（群主专用，请勿分享本页链接和口令）</small></h1>
+<div class="bar">
+<input id="tok" type="password" placeholder="管理口令" size="18">
+<button onclick="load()">刷新订单</button>
+<button class="ghost" onclick="exportCsv()">导出 CSV</button>
+<span id="stat" style="align-self:center;font-size:13.5px;color:#777"></span>
+</div>
+<div class="err" id="err"></div>
+<div class="sum" id="sum">先输入口令，再点「刷新订单」。</div>
+<h2>每款已拼汇总（判断成团用）</h2>
+<div id="tally"></div>
+<h2>订单列表</h2>
+<div id="list"></div>
+<script>
+let ORDERS = [];
+const MN = {pickup:"自提", local:"同城配送", ship:"快递"};
+const ST = {pending:"待成团", formed:"已成团", paid:"已收款", done:"已完成", cancelled:"已取消"};
+function money(v){ return v===null||v===undefined ? "—" : "$"+Number(v).toFixed(2); }
+function tok(){ return document.getElementById("tok").value.trim() || sessionStorage.getItem("xm_tok") || ""; }
+async function api(path, opts){
+  const t = tok(); if(t) sessionStorage.setItem("xm_tok", t);
+  const r = await fetch(path, Object.assign({headers:{"x-admin-token":t,"Content-Type":"application/json"}}, opts||{}));
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok || j.ok===false) throw new Error(j.error || ("HTTP "+r.status));
+  return j;
+}
+async function load(){
+  const err = document.getElementById("err"); err.textContent = "";
+  try{
+    const j = await api("/api/admin");
+    ORDERS = j.orders || [];
+    render();
+  }catch(e){ err.textContent = "加载失败：" + e.message + "（口令不对或系统未开通）"; }
+}
+function render(){
+  const act = ORDERS.filter(o=>o.status!=="cancelled");
+  const gmv = act.reduce((s,o)=> s + (o.total===null ? o.subtotal : o.total), 0);
+  document.getElementById("stat").textContent = "共 " + ORDERS.length + " 单";
+  document.getElementById("sum").innerHTML =
+    "有效订单 <b>" + act.length + "</b> 单 · 应收合计 <b>" + money(gmv) + "</b>（快递单未含快递费）<br>" +
+    "待成团 " + act.filter(o=>o.status==="pending").length + " · 已成团 " + act.filter(o=>o.status==="formed").length +
+    " · 已收款 " + act.filter(o=>o.status==="paid").length + " · 已完成 " + act.filter(o=>o.status==="done").length;
+  const tally = {};
+  act.forEach(o=> (o.items||[]).forEach(it=>{ const t = tally[it.sku] = tally[it.sku] || {title:it.title, name:it.name, qty:0, target:it.target}; t.qty += it.qty; }));
+  const rows = Object.entries(tally).sort((a,b)=> b[1].qty/b[1].target - a[1].qty/a[1].target)
+    .map(([sku,t])=> "<tr><td>"+sku+"</td><td>"+t.title+" · "+t.name+"</td><td>"+t.qty+" / "+t.target+" 份</td><td>"+(t.qty>=t.target ? "✅ 可成团" : "还差 "+(t.target-t.qty)+" 份")+"</td></tr>").join("");
+  document.getElementById("tally").innerHTML = rows ? "<table><tr><th>SKU</th><th>商品</th><th>已拼</th><th>状态</th></tr>"+rows+"</table>" : "暂无订单";
+  const orows = ORDERS.map(o=>{
+    const items = (o.items||[]).map(it=> it.title+"·"+it.name+" ×"+it.qty).join("<br>");
+    const when = new Date(o.ts).toLocaleString("zh-CN",{hour12:false});
+    const opts = Object.keys(ST).map(s=> '<option value="'+s+'"'+(o.status===s?" selected":"")+">"+ST[s]+"</option>").join("");
+    return "<tr><td>"+when+"<br><small>"+o.id+"</small></td><td>"+o.name+"<br>"+o.phone+(o.wechat?"<br>微信："+o.wechat:"")+"</td><td>"+items+"</td>" +
+      "<td>"+MN[o.method]+(o.addr?"<br>"+o.addr:"")+"<br>合计 <b>"+(o.total===null? money(o.subtotal)+" + 快递费" : money(o.total))+"</b>"+(o.note?"<br><small>备注："+o.note+"</small>":"")+"</td>" +
+      '<td><select onchange="setStatus(\''+o.id+'\', this.value)">'+opts+'</select><br><button class="ghost" style="margin-top:6px;padding:4px 9px" onclick="delOrder(\''+o.id+'\')">删除</button></td></tr>';
+  }).join("");
+  document.getElementById("list").innerHTML = orows ? "<table><tr><th>时间 / 单号</th><th>联系人</th><th>商品</th><th>配送 / 金额</th><th>状态</th></tr>"+orows+"</table>" : "暂无订单";
+}
+async function setStatus(id, status){
+  try{ await api("/api/admin", {method:"POST", body: JSON.stringify({id, action:"status", status})}); load(); }
+  catch(e){ document.getElementById("err").textContent = "改状态失败：" + e.message; }
+}
+async function delOrder(id){
+  if(!confirm("确定删除订单 " + id + "？（测试单或误单才删）")) return;
+  try{ await api("/api/admin", {method:"POST", body: JSON.stringify({id, action:"delete"})}); load(); }
+  catch(e){ document.getElementById("err").textContent = "删除失败：" + e.message; }
+}
+function exportCsv(){
+  const head = "订单号,时间,状态,姓名,手机,微信,方式,地址,商品,小计,配送费,合计,备注\n";
+  const esc = v => '"' + String(v===null||v===undefined?"":v).replace(/"/g,'""') + '"';
+  const lines = ORDERS.map(o=> [o.id, o.ts, ST[o.status]||o.status, o.name, o.phone, o.wechat||"", MN[o.method], o.addr||"",
+    (o.items||[]).map(it=> it.title+"·"+it.name+"×"+it.qty).join("；"), o.subtotal, o.fee===null?"实付":o.fee, o.total===null? o.subtotal+"+快递费":o.total, o.note||""].map(esc).join(","));
+  const blob = new Blob(["\ufeff" + head + lines.join("\n")], {type:"text/csv"});
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "xiahuamart-orders.csv"; a.click();
+}
+if(sessionStorage.getItem("xm_tok")) load();
+</script></div></body></html>
