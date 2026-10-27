@@ -29,6 +29,8 @@ small{color:#999}
 <div class="sum" id="sum">先输入口令，再点「刷新订单」。</div>
 <h2>每款已拼汇总（判断成团用）</h2>
 <div id="tally"></div>
+<h2>推荐汇总（发福利按这个数）</h2>
+<div id="refsum"></div>
 <h2>订单列表</h2>
 <div id="list"></div>
 <script>
@@ -65,11 +67,16 @@ function render(){
   const rows = Object.entries(tally).sort((a,b)=> b[1].qty/b[1].target - a[1].qty/a[1].target)
     .map(([sku,t])=> "<tr><td>"+sku+"</td><td>"+t.title+" · "+t.name+"</td><td>"+t.qty+" / "+t.target+" 份</td><td>"+(t.qty>=t.target ? "✅ 可成团" : "还差 "+(t.target-t.qty)+" 份")+"</td></tr>").join("");
   document.getElementById("tally").innerHTML = rows ? "<table><tr><th>SKU</th><th>商品</th><th>已拼</th><th>状态</th></tr>"+rows+"</table>" : "暂无订单";
+  const refs = {};
+  act.forEach(o=>{ const r = (o.referrer||"").trim(); if(!r) return; const s = refs[r] = refs[r] || {n:0, amt:0}; s.n += 1; s.amt += (o.total===null ? o.subtotal : o.total); });
+  const rrows = Object.entries(refs).sort((a,b)=> b[1].n - a[1].n)
+    .map(([r,s])=> "<tr><td>"+r+"</td><td>"+s.n+" 单</td><td>"+money(s.amt)+"</td></tr>").join("");
+  document.getElementById("refsum").innerHTML = rrows ? "<table><tr><th>推荐人（群昵称）</th><th>带来的有效订单</th><th>合计金额</th></tr>"+rrows+"</table><small>只统计未取消、且下单时填了推荐人的订单；是否算「首单」发福利前请再人工核对一眼。</small>" : "暂无带推荐人的订单";
   const orows = ORDERS.map(o=>{
     const items = (o.items||[]).map(it=> it.title+"·"+it.name+" ×"+it.qty).join("<br>");
     const when = new Date(o.ts).toLocaleString("zh-CN",{hour12:false});
     const opts = Object.keys(ST).map(s=> '<option value="'+s+'"'+(o.status===s?" selected":"")+">"+ST[s]+"</option>").join("");
-    return "<tr><td>"+when+"<br><small>"+o.id+"</small></td><td>"+o.name+"<br>"+o.phone+(o.wechat?"<br>微信："+o.wechat:"")+"</td><td>"+items+"</td>" +
+    return "<tr><td>"+when+"<br><small>"+o.id+"</small></td><td>"+o.name+"<br>"+o.phone+(o.wechat?"<br>微信："+o.wechat:"")+(o.referrer?"<br>推荐人："+o.referrer:"")+"</td><td>"+items+"</td>" +
       "<td>"+MN[o.method]+(o.addr?"<br>"+o.addr:"")+"<br>合计 <b>"+(o.total===null? money(o.subtotal)+" + 快递费" : money(o.total))+"</b>"+(o.note?"<br><small>备注："+o.note+"</small>":"")+"</td>" +
       '<td><select onchange="setStatus(\''+o.id+'\', this.value)">'+opts+'</select><br><button class="ghost" style="margin-top:6px;padding:4px 9px" onclick="delOrder(\''+o.id+'\')">删除</button></td></tr>';
   }).join("");
@@ -85,10 +92,10 @@ async function delOrder(id){
   catch(e){ document.getElementById("err").textContent = "删除失败：" + e.message; }
 }
 function exportCsv(){
-  const head = "订单号,时间,状态,姓名,手机,微信,方式,地址,商品,小计,配送费,合计,备注\n";
+  const head = "订单号,时间,状态,姓名,手机,微信,方式,地址,商品,小计,配送费,合计,备注,推荐人\n";
   const esc = v => '"' + String(v===null||v===undefined?"":v).replace(/"/g,'""') + '"';
   const lines = ORDERS.map(o=> [o.id, o.ts, ST[o.status]||o.status, o.name, o.phone, o.wechat||"", MN[o.method], o.addr||"",
-    (o.items||[]).map(it=> it.title+"·"+it.name+"×"+it.qty).join("；"), o.subtotal, o.fee===null?"实付":o.fee, o.total===null? o.subtotal+"+快递费":o.total, o.note||""].map(esc).join(","));
+    (o.items||[]).map(it=> it.title+"·"+it.name+"×"+it.qty).join("；"), o.subtotal, o.fee===null?"实付":o.fee, o.total===null? o.subtotal+"+快递费":o.total, o.note||"", o.referrer||""].map(esc).join(","));
   const blob = new Blob(["\ufeff" + head + lines.join("\n")], {type:"text/csv"});
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "xiahuamart-orders.csv"; a.click();
 }
