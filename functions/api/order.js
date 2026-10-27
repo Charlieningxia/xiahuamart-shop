@@ -19,6 +19,7 @@ export async function onRequestPost(context) {
   const wechat = String(body.wechat || "").trim().slice(0, 40);
   const addr = String(body.addr || "").trim().slice(0, 200);
   const note = String(body.note || "").trim().slice(0, 200);
+  const referrer = String(body.referrer || "").trim().slice(0, 40);
   const method = ["pickup", "local", "ship"].includes(body.method) ? body.method : "pickup";
   const digits = phone.replace(/\D/g, "");
   if (!name) return json({ ok: false, error: "请填写姓名" }, 400);
@@ -40,7 +41,7 @@ export async function onRequestPost(context) {
   const fee = method === "local" ? (subtotal >= 35 ? 0 : 5.99) : (method === "ship" ? null : 0);
   const total = fee === null ? null : money(subtotal + fee);
   const id = "XM" + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase();
-  const order = { id, ts: new Date().toISOString(), status: "pending", name, phone, wechat, addr, note, method, items, subtotal, fee, total };
+  const order = { id, ts: new Date().toISOString(), status: "pending", name, phone, wechat, addr, note, referrer, method, items, subtotal, fee, total };
   await env.ORDERS.put("order:" + id, JSON.stringify(order));
   return json({ ok: true, id, subtotal, fee, total });
 }
